@@ -1,0 +1,144 @@
+name: Build
+
+# Build the libCCI example tools (cci_info / cci_extract / cci_encode) for
+# Windows, Linux and macOS across x64 + arm64, and publish them as a rolling
+# "latest" release on every commit.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test (linux-x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build & test
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+          ctest --test-dir build --output-on-failure
+
+  linux:
+    name: Linux (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-latest }
+          - { arch: arm64,  runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCCI_BUILD_TESTS=OFF
+          cmake --build build -j
+      - name: Package
+        run: |
+          mkdir -p out
+          cp build/cci_info build/cci_extract build/cci_encode out/
+          cp README.md FORMAT.md LICENSE out/ 2>/dev/null || true
+          cd out && zip -r ../libcci-linux-${{ matrix.arch }}.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libcci-linux-${{ matrix.arch }}
+          path: libcci-linux-${{ matrix.arch }}.zip
+
+  macos:
+    name: macOS (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, arm64]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCCI_BUILD_TESTS=OFF \
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
+          cmake --build build -j
+      - name: Package
+        run: |
+          mkdir -p out
+          cp build/cci_info build/cci_extract build/cci_encode out/
+          cp README.md FORMAT.md LICENSE out/ 2>/dev/null || true
+          cd out && zip -r ../libcci-macos-${{ matrix.arch }}.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libcci-macos-${{ matrix.arch }}
+          path: libcci-macos-${{ matrix.arch }}.zip
+
+  windows:
+    name: Windows (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,   platform: x64 }
+          - { arch: arm64, platform: ARM64 }
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build
+        run: |
+          cmake -B build -A ${{ matrix.platform }} -DCCI_BUILD_TESTS=OFF
+          cmake --build build --config Release -j
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p out
+          cp build/Release/cci_info.exe build/Release/cci_extract.exe \
+             build/Release/cci_encode.exe out/
+          cp README.md FORMAT.md LICENSE out/ 2>/dev/null || true
+          cd out && 7z a ../libcci-windows-${{ matrix.arch }}.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libcci-windows-${{ matrix.arch }}
+          path: libcci-windows-${{ matrix.arch }}.zip
+
+  release:
+    name: Publish latest
+    needs: [test, linux, macos, windows]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish rolling 'latest' release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s globstar nullglob
+          files=(artifacts/**/*.zip)
+          echo "Attaching: ${files[*]}"
+          gh release delete latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Latest" \
+            --notes "Automated build of ${GITHUB_SHA}." \
+            --prerelease \
+            "${files[@]}"
