@@ -1,0 +1,21 @@
+# Build output
+/build/
+build*/
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+
+# Test / scratch artifacts
+rt_input.iso
+rt_single.cci
+rt_split*.cci
+*.iso
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store

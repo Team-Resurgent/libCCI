@@ -1,0 +1,7 @@
+# Normalize line endings: LF in the repo for all text, auto-detected.
+* text=auto eol=lf
+
+# Binary artifacts (never touch line endings).
+*.cci binary
+*.iso binary
+*.png binary
